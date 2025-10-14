@@ -1,7 +1,6 @@
 """
 Locust-based gRPC load testing for distributed Kubernetes deployment.
 """
-import asyncio
 import random
 import time
 from typing import Dict, Any
@@ -27,7 +26,7 @@ class GRPCLocustUser(User):
         try:
             # In Kubernetes, this would be the service name
             endpoint = self.host or "localhost:50051"
-            self.channel = grpc.aio.insecure_channel(endpoint)
+            self.channel = grpc.insecure_channel(endpoint)
             self.stub = GreeterStub(self.channel)
         except Exception as e:
             events.request.fire(
@@ -46,17 +45,17 @@ class GRPCLocustUser(User):
     def on_stop(self):
         """Called when a user stops."""
         if self.channel:
-            asyncio.create_task(self.channel.close())
+            self.channel.close()
     
     @task(3)
-    async def unary_call(self):
+    def unary_call(self):
         """Test unary gRPC calls (weight: 3)."""
         start_time = time.time()
         
         try:
             name = f"User-{random.randint(1, 1000)}"
             request = HelloRequest(name=name)
-            response = await self.stub.SayHello(request)
+            response = self.stub.SayHello(request)
             
             response_time = (time.time() - start_time) * 1000  # Convert to ms
             
@@ -80,11 +79,11 @@ class GRPCLocustUser(User):
             )
             
             # Reconnect on error
-            await self._reconnect()
+            self._reconnect()
             raise RescheduleTask()
     
     @task(1)
-    async def server_streaming_call(self):
+    def server_streaming_call(self):
         """Test server streaming gRPC calls (weight: 1)."""
         start_time = time.time()
         total_messages = 0
@@ -93,10 +92,10 @@ class GRPCLocustUser(User):
             name = f"StreamUser-{random.randint(1, 1000)}"
             request = HelloRequest(name=name)
             
-            async for response in self.stub.SayHelloStream(request):
+            for response in self.stub.SayHelloStream(request):
                 total_messages += 1
                 # Simulate processing time
-                await asyncio.sleep(0.1)
+                time.sleep(0.1)
             
             response_time = (time.time() - start_time) * 1000
             
@@ -119,23 +118,23 @@ class GRPCLocustUser(User):
                 exception=e
             )
             
-            await self._reconnect()
+            self._reconnect()
             raise RescheduleTask()
     
     @task(1)
-    async def client_streaming_call(self):
+    def client_streaming_call(self):
         """Test client streaming gRPC calls (weight: 1)."""
         start_time = time.time()
         
         try:
             names = [f"ClientUser-{i}" for i in range(random.randint(2, 5))]
             
-            async def request_generator():
+            def request_generator():
                 for name in names:
                     yield HelloRequest(name=name)
-                    await asyncio.sleep(0.1)
+                    time.sleep(0.1)
             
-            response = await self.stub.ProcessRequests(request_generator())
+            response = self.stub.ProcessRequests(request_generator())
             
             response_time = (time.time() - start_time) * 1000
             
@@ -158,13 +157,13 @@ class GRPCLocustUser(User):
                 exception=e
             )
             
-            await self._reconnect()
+            self._reconnect()
             raise RescheduleTask()
     
-    async def _reconnect(self):
+    def _reconnect(self):
         """Reconnect to gRPC service."""
         if self.channel:
-            await self.channel.close()
+            self.channel.close()
         self._connect()
 
 
@@ -172,16 +171,16 @@ class GRPCLoadTestUser(GRPCLocustUser):
     """Specialized user for high-load testing."""
     
     @task(10)
-    async def high_frequency_calls(self):
+    def high_frequency_calls(self):
         """High-frequency unary calls for load testing."""
-        await self.unary_call()
+        self.unary_call()
     
     @task(1)
-    async def burst_test(self):
+    def burst_test(self):
         """Burst of rapid calls."""
         for _ in range(5):
-            await self.unary_call()
-            await asyncio.sleep(0.01)  # Very short delay
+            self.unary_call()
+            time.sleep(0.01)  # Very short delay
 
 
 # Custom event handlers for better monitoring

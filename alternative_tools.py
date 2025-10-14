@@ -18,10 +18,10 @@ class K6GRPCTest:
     
     def __init__(self, endpoint: str):
         self.endpoint = endpoint
-        self.channel = grpc.aio.insecure_channel(endpoint)
+        self.channel = grpc.insecure_channel(endpoint)
         self.stub = GreeterStub(self.channel)
     
-    async def run_scenario(self, duration_seconds: int = 60, rps: int = 100):
+    def run_scenario(self, duration_seconds: int = 60, rps: int = 100):
         """Run a K6-style scenario."""
         print(f"Running K6-style test: {duration_seconds}s at {rps} RPS")
         
@@ -36,7 +36,7 @@ class K6GRPCTest:
             
             try:
                 request = HelloRequest(name=f"K6User-{int(time.time())}")
-                response = await self.stub.SayHello(request)
+                response = self.stub.SayHello(request)
                 
                 request_time = (time.time() - request_start) * 1000
                 results.append({
@@ -57,7 +57,7 @@ class K6GRPCTest:
             # Maintain RPS
             elapsed = time.time() - request_start
             if elapsed < interval:
-                await asyncio.sleep(interval - elapsed)
+                time.sleep(interval - elapsed)
         
         return self._analyze_results(results)
     
@@ -97,10 +97,10 @@ class ArtilleryGRPCTest:
     
     def __init__(self, endpoint: str):
         self.endpoint = endpoint
-        self.channel = grpc.aio.insecure_channel(endpoint)
+        self.channel = grpc.insecure_channel(endpoint)
         self.stub = GreeterStub(self.channel)
     
-    async def run_phases(self, phases: List[Dict[str, Any]]):
+    def run_phases(self, phases: List[Dict[str, Any]]):
         """Run Artillery-style phases."""
         print("Running Artillery-style phased test")
         
@@ -113,15 +113,15 @@ class ArtilleryGRPCTest:
             
             print(f"Phase: {name} - {duration}s at {arrival_rate} RPS")
             
-            phase_results = await self._run_phase(duration, arrival_rate)
+            phase_results = self._run_phase(duration, arrival_rate)
             all_results.extend(phase_results)
             
             # Brief pause between phases
-            await asyncio.sleep(2)
+            time.sleep(2)
         
         return self._analyze_results(all_results)
     
-    async def _run_phase(self, duration: int, arrival_rate: int) -> List[Dict]:
+    def _run_phase(self, duration: int, arrival_rate: int) -> List[Dict]:
         """Run a single phase."""
         start_time = time.time()
         end_time = start_time + duration
@@ -134,7 +134,7 @@ class ArtilleryGRPCTest:
             
             try:
                 request = HelloRequest(name=f"ArtilleryUser-{int(time.time())}")
-                response = await self.stub.SayHello(request)
+                response = self.stub.SayHello(request)
                 
                 request_time = (time.time() - request_start) * 1000
                 results.append({
@@ -155,7 +155,7 @@ class ArtilleryGRPCTest:
             # Maintain arrival rate
             elapsed = time.time() - request_start
             if elapsed < interval:
-                await asyncio.sleep(interval - elapsed)
+                time.sleep(interval - elapsed)
         
         return results
     
@@ -195,32 +195,44 @@ class JMeterGRPCTest:
     
     def __init__(self, endpoint: str):
         self.endpoint = endpoint
-        self.channel = grpc.aio.insecure_channel(endpoint)
+        self.channel = grpc.insecure_channel(endpoint)
         self.stub = GreeterStub(self.channel)
     
-    async def run_thread_group(self, num_threads: int = 10, duration: int = 60, ramp_up: int = 10):
+    def run_thread_group(self, num_threads: int = 10, duration: int = 60, ramp_up: int = 10):
         """Run JMeter-style thread group."""
         print(f"Running JMeter-style test: {num_threads} threads, {duration}s duration, {ramp_up}s ramp-up")
         
-        # Create tasks for each thread
-        tasks = []
+        # Create threads for each thread
+        import threading
+        threads = []
+        all_results = []
+        results_lock = threading.Lock()
+        
+        def thread_worker(thread_id, duration, start_delay):
+            # Wait for ramp-up
+            if start_delay > 0:
+                time.sleep(start_delay)
+            
+            thread_results = self._run_thread(thread_id, duration, 0)
+            
+            with results_lock:
+                all_results.extend(thread_results)
+        
         for i in range(num_threads):
             # Stagger thread starts for ramp-up
             start_delay = (i * ramp_up) / num_threads
-            task = asyncio.create_task(
-                self._run_thread(i, duration, start_delay)
+            thread = threading.Thread(
+                target=thread_worker,
+                args=(i, duration, start_delay)
             )
-            tasks.append(task)
+            threads.append(thread)
+            thread.start()
         
         # Wait for all threads to complete
-        all_results = await asyncio.gather(*tasks)
+        for thread in threads:
+            thread.join()
         
-        # Flatten results
-        flattened_results = []
-        for thread_results in all_results:
-            flattened_results.extend(thread_results)
-        
-        return self._analyze_results(flattened_results)
+        return self._analyze_results(all_results)
     
     async def _run_thread(self, thread_id: int, duration: int, start_delay: float) -> List[Dict]:
         """Run a single thread."""
